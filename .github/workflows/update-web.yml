@@ -1,0 +1,144 @@
+name: Update Web (notifikasi native APK)
+
+# Cara pakai: taruh file ini di repo WEB (yang tersambung ke Vercel) sebagai
+# .github/workflows/update-web.yml . Setelah di-commit, workflow jalan otomatis.
+# Bisa juga dijalankan manual: Actions > Update Web > Run workflow.
+# Isinya: menambal index.html dan api/_push.js langsung di repo, lalu commit.
+# Aman dijalankan berulang (kalau sudah ditambal, dilewati).
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/update-web.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tulis skrip tambalan
+        run: |
+          cat > /tmp/patch_index.py <<'PYEOF'
+          import re,sys
+          IDX=sys.argv[1]
+          src=open(IDX,encoding='utf-8').read()
+          def rep(old,new,count=1):
+              global src
+              n=src.count(old)
+              if n!=count: sys.exit('GAGAL: %r ditemukan %d kali (harap %d)'%(old[:80],n,count))
+              src=src.replace(old,new)
+
+          # E1 deteksi APK lebih awal
+          rep('<script>window.__dip=null;','<script>window.__dip=null;window.IS_NATIVE=!!(window.Capacitor&&typeof Capacitor.isNativePlatform==="function"&&Capacitor.isNativePlatform())||/GVSmartPayApp/i.test(navigator.userAgent);')
+
+          # E2 di APK dianggap "sudah terpasang": menu profil Pasang Aplikasi & banner pasang hilang
+          rep("(display-mode: standalone)').matches)||navigator.standalone===true;","(display-mode: standalone)').matches)||navigator.standalone===true||!!window.IS_NATIVE;")
+
+          # E3 setupPush -> jalur native
+          rep("async function setupPush(verbose){\n","async function setupPush(verbose){\n  if(window.IS_NATIVE)return nativePush(verbose);\n")
+
+          # E4 pemicu daftar ulang token
+          rep("if(typeof Notification!='undefined'&&Notification.permission==='granted')setupPush()}});","if(window.IS_NATIVE||(typeof Notification!='undefined'&&Notification.permission==='granted'))setupPush()}});")
+          rep("&&typeof Notification!='undefined'&&Notification.permission==='granted')setupPush()}catch(e){}});","&&(window.IS_NATIVE||(typeof Notification!='undefined'&&Notification.permission==='granted')))setupPush()}catch(e){}});")
+
+          # E5 logout
+          rep("async function unregisterPush(){try{","async function unregisterPush(){if(window.IS_NATIVE)return nativeUnreg();try{")
+
+          # E6 blok native
+          block = r'''/* ---------- Notifikasi native Android (FCM) - hanya aktif di APK ---------- */
+          const NPLG=()=>window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.PushNotifications;
+          window.__nperm=window.__nperm||'prompt';let NPWAIT=null,NPINIT=false;
+          async function nativePerm(){const P=NPLG();if(!P)return 'denied';try{const r=await P.checkPermissions();window.__nperm=r.receive;return r.receive}catch(e){return 'denied'}}
+          async function nativeAskPerm(){const P=NPLG();if(!P)return false;nativeInit();let r;try{r=await P.checkPermissions();if(r.receive!=='granted')r=await P.requestPermissions()}catch(e){r={receive:'denied'}}window.__nperm=r.receive;return r.receive==='granted'}
+          function nativeSave(token){return(async()=>{const cu=auth&&auth.currentUser;if(!cu||!token)return false;let pv='',lu='',ls=0;try{pv=localStorage.getItem('gvsp_ntok')||'';lu=localStorage.getItem('gvsp_ntok_uid')||'';ls=+localStorage.getItem('gvsp_ntok_srv')||0}catch(e){}
+          if(pv===token&&lu===cu.uid&&Date.now()-ls<432e5)return true;
+          for(let i=0;i<3;i++){try{const t=await cu.getIdToken(),r=await fetch('/api/notify',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({action:'register',token})});if(r.ok){try{localStorage.setItem('gvsp_ntok',token);localStorage.setItem('gvsp_ntok_uid',cu.uid);localStorage.setItem('gvsp_ntok_srv',String(Date.now()))}catch(e){}return true}}catch(e){}await new Promise(r=>setTimeout(r,900))}
+          return false})()}
+          function nativeInit(){if(NPINIT)return true;const P=NPLG();if(!P)return false;NPINIT=true;
+          P.addListener('registration',t=>{const v=t&&t.value;window.__ntok=v;if(NPWAIT)NPWAIT(v);nativeSave(v)});
+          P.addListener('registrationError',e=>{console.warn('FCM native error',e);if(NPWAIT)NPWAIT(null)});
+          P.addListener('pushNotificationReceived',n=>{try{toast((n.title?n.title+' - ':'')+(n.body||''))}catch(e){}});
+          P.addListener('pushNotificationActionPerformed',a=>{try{const u=a&&a.notification&&a.notification.data&&a.notification.data.url;if(u)setTimeout(()=>handleGo(u),700)}catch(e){}});
+          return true}
+          async function nativePush(verbose){const why=m=>{if(verbose)throw new Error(m);return null};
+          if(DEMO)return why('Mode demo');const P=NPLG();if(!P)return why('Plugin notifikasi native tidak tersedia. Pasang APK versi terbaru.');
+          nativeInit();if(await nativePerm()!=='granted')return why('Izin notifikasi belum diberikan');if(!(auth&&auth.currentUser))return why('Belum login');
+          try{let tok=window.__ntok;
+          if(!tok){tok=await new Promise(res=>{const to=setTimeout(()=>{NPWAIT=null;res(null)},15000);NPWAIT=v=>{clearTimeout(to);NPWAIT=null;res(v)};P.register().catch(()=>{clearTimeout(to);NPWAIT=null;res(null)})})}
+          if(!tok)throw new Error('Token FCM kosong. Pastikan google-services.json terpasang saat build APK.');
+          const ok=await nativeSave(tok);if(!ok&&verbose)throw new Error('Gagal mendaftarkan token ke server');
+          window.__pushOn=true;return tok}catch(e){console.warn('Push native gagal:',e&&e.message);if(verbose)throw e;return null}}
+          async function nativeEnable(){if(!NPLG()){toast('Plugin notifikasi tidak tersedia, pasang APK terbaru');return false}
+          if(!(await nativeAskPerm())){sheet(`<h3>Izin notifikasi belum aktif</h3><p class="m">Buka Pengaturan HP, pilih Aplikasi, GVSMARTPAY, Notifikasi, lalu aktifkan. Setelah itu buka aplikasi lagi.</p><button class="btn w g2" data-a="close">Tutup</button>`);return false}
+          try{await setupPush(true)}catch(e){console.warn(e)}toast('Notifikasi aktif');return true}
+          async function nativeUnreg(){try{const tk=localStorage.getItem('gvsp_ntok'),cu=auth&&auth.currentUser;await Promise.race([(async()=>{if(tk&&cu){try{const t=await cu.getIdToken();await fetch('/api/notify',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({action:'unregister',token:tk})})}catch(e){}}
+          try{const P=NPLG();if(P&&P.unregister)await P.unregister()}catch(e){}try{['gvsp_ntok','gvsp_ntok_uid','gvsp_ntok_srv'].forEach(k=>localStorage.removeItem(k))}catch(e){}window.__ntok=null})(),new Promise(r=>setTimeout(r,4000))])}catch(e){}}
+          if(window.IS_NATIVE){setTimeout(()=>{try{nativeInit()}catch(e){}},300)}
+          '''
+          rep("/* ---------- Pasang sebagai aplikasi (PWA) ---------- */\n", block+"/* ---------- Pasang sebagai aplikasi (PWA) ---------- */\n")
+
+          # E7 tombol/banner Aktifkan Notifikasi di APK
+          rep("async function notifNow(){\n","async function notifNow(){\n  if(window.IS_NATIVE)return nativeEnable();\n")
+          rep("if(typeof Notification!='undefined'&&Notification.permission!=='granted')q.push({id:'sys-notif'","if(window.IS_NATIVE?window.__nperm!=='granted':(typeof Notification!='undefined'&&Notification.permission!=='granted'))q.push({id:'sys-notif'")
+          rep("await detectInst();PQ=puBuild();puNext()","await detectInst();if(window.IS_NATIVE)await nativePerm();PQ=puBuild();puNext()")
+
+          # E8 halaman Notifikasi admin
+          rep("act.nsetup=async()=>{NS='Memproses...';render();try{","act.nsetup=async()=>{NS='Memproses...';render();try{if(window.IS_NATIVE){if(!(await nativeAskPerm())){NS='Izin belum diberikan. Buka Pengaturan HP, Aplikasi, GVSMARTPAY, Notifikasi';return render()}}")
+
+          # E9 Tes Notifikasi HP (admin)
+          rep("    if(typeof Notification=='undefined'||!('serviceWorker' in navigator)){no('Browser ini tidak mendukung notifikasi. Buka lewat Chrome.');return show(true)}",
+              "    if(window.IS_NATIVE){if(!(await nativeAskPerm())){no('Izin notifikasi belum diberikan. Buka Pengaturan HP, Aplikasi, GVSMARTPAY, Notifikasi.');return show(true)}ok('Aplikasi Android native, izin notifikasi diberikan');show(false)}else{\n    if(typeof Notification=='undefined'||!('serviceWorker' in navigator)){no('Browser ini tidak mendukung notifikasi. Buka lewat Chrome.');return show(true)}")
+          rep("    ok('Izin notifikasi diberikan');show(false);\n","    ok('Izin notifikasi diberikan');show(false);}\n")
+
+          open(IDX,'w',encoding='utf-8').write(src)
+          print('index.html OK',len(src))
+          PYEOF
+          cat > /tmp/patch_push.py <<'PYEOF'
+          import sys
+          PSH=sys.argv[1]
+          # ---- backend _push.js
+          p=open(PSH,encoding='utf-8').read()
+          old="const base = { data, webpush: { headers: { Urgency: 'high', TTL: TTL, Topic: clean(tag).slice(0, 32) || 'gv' } }, android: { priority: 'high', ttl: Number(TTL) * 1000 } };"
+          assert p.count(old)==1
+          new="""// Android (APK): pesan berisi blok notification supaya SISTEM Android yang menampilkan notifikasi,
+          // jadi tetap masuk walau aplikasi ditutup / di-swipe dari recent apps (cara kerja aplikasi besar).
+          // Browser/PWA tidak terpengaruh: mereka tetap memakai data-only + webpush di atas.
+          const androidNotif = { title: String(title).slice(0, 80), body: String(body || '').slice(0, 300), channelId: 'gv_default', icon: 'ic_stat_gv', color: '#7c3aed', tag: String(tag).slice(0, 60), sound: 'default', defaultVibrateTimings: true, notificationPriority: 'PRIORITY_MAX', visibility: 'PUBLIC' };
+            const base = { data, webpush: { headers: { Urgency: 'high', TTL: TTL, Topic: clean(tag).slice(0, 32) || 'gv' } }, android: { priority: 'high', ttl: Number(TTL) * 1000, notification: androidNotif } };"""
+          p=p.replace(old,new)
+          open(PSH,'w',encoding='utf-8').write(p)
+          print('_push.js OK')
+          PYEOF
+
+      - name: Terapkan tambalan
+        run: |
+          test -f index.html || { echo "::error::index.html tidak ada di root repo ini. Pastikan ini repo WEB, bukan repo APK."; exit 1; }
+          test -f api/_push.js || { echo "::error::api/_push.js tidak ada. Pastikan ini repo WEB."; exit 1; }
+          if grep -q 'window.IS_NATIVE' index.html; then
+            echo "index.html sudah ditambal, dilewati."
+          else
+            python3 /tmp/patch_index.py index.html
+          fi
+          if grep -q 'androidNotif' api/_push.js; then
+            echo "api/_push.js sudah ditambal, dilewati."
+          else
+            python3 /tmp/patch_push.py api/_push.js
+          fi
+
+      - name: Commit dan push
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan."
+          else
+            git commit -m "Notifikasi native APK: sembunyikan pasang aplikasi di APK dan kirim push untuk Android"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+          
