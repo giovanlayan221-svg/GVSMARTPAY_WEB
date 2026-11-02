@@ -1,0 +1,45 @@
+MANGBELI + CEK NAMA + DETEKSI OPERATOR — catatan deploy
+=======================================================
+
+1) Environment Variables di Vercel (Settings > Environment Variables)
+   MANGBELI_API_KEY      = api_key dari MangBeli > Bisnis & Referral > API Saya
+   MANGBELI_API_SECRET   = api_secret (hanya tampil sekali saat dibuat)
+   (opsional) MANGBELI_BASE_URL = https://mangbeli.com/api/v1
+   Lalu redeploy.
+
+2) Webhook MangBeli (disarankan): daftarkan di halaman API Saya
+   https://<domainmu>/api/mangbeli-callback
+   Alamat persisnya juga tampil di Admin > Pesanan > MangBeli API > Cek Saldo.
+   Tanpa webhook pun status tetap dicek otomatis oleh /api/sync-pending.
+
+3) Memakai MangBeli di produk
+   Admin > Pesanan > MangBeli API > Katalog -> salin SKU.
+   Admin > Produk -> isi kolom SKU, pilih "Provider: MangBeli".
+   Game ID+Zone dikirim digabung (sesuai catatan resmi MangBeli).
+   Harga otomatis (tiap 12 jam) ikut modal MangBeli untuk produk berprovider MangBeli.
+   Gunakan akun/API key SANDBOX MangBeli dulu untuk uji (saldo tidak terpotong).
+
+4) Cek Nama Akun
+   Admin > Produk > kartu "Cek Nama Akun": isi baris  Nama = KODE_SKU
+   (contoh  Dana = KODE_CEK_DANA). Lalu tekan "Uji Coba" untuk melihat respons mentah HAYBI.
+   Uji coba = transaksi sungguhan ke produk cek nama HAYBI (memakai harganya).
+   Format respons HAYBI untuk cek nama belum ada di dokumentasi: nama diambil dari
+   kolom "sn" (cadangan "pesan"). Kalau di respons mentah nama ada di kolom lain, beri tahu.
+
+5) Deteksi operator
+   Daftar awalan ada di konstanta OPPFX (index.html). Nomor beda operator diblokir.
+
+6) Koleksi Firestore baru (hanya diakses server, tidak perlu rules baru):
+   providerCosts, cekNamaCache, cekNamaLog
+
+7) Tombol Kembali HP / browser / PWA
+   Kembali sekarang mundur urut per halaman (Pulsa > Beranda), menutup lembar/popup dulu,
+   dan di Beranda memunculkan dialog "Keluar dari GVSMARTPAY?". Cache PWA dinaikkan ke gvsp-v4
+   supaya pengguna PWA mendapat versi baru (tutup lalu buka aplikasi 1-2 kali).
+
+8) Riwayat: detail pesanan + voucher pakai nomor telepon
+   Tiap pesanan di Riwayat (dan daftar transaksi di Beranda) bisa diketuk: ID pesanan, jenis, tanggal pesan,
+   waktu selesai, data yang dimasukkan (ID Game + Server, nomor HP, dst), SN/kode (ada tombol Salin),
+   keterangan provider, dan rincian pembayaran (harga, biaya admin, diskon voucher, metode bayar, total).
+   Voucher game (Google Play, Garena Shell, Steam) sekarang meminta Nomor Telepon (10-13 digit, awalan 08).
+   Pesanan lama tetap bisa dilihat; jenis voucher dikenali dari nama produknya.
