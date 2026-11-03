@@ -1,8 +1,0 @@
-{
-  "name": "gvsmartpay",
-  "private": true,
-  "description": "GVSMARTPAY - dependensi untuk /api/notify.js (kirim push notification lewat Vercel, tanpa Firebase Blaze)",
-  "dependencies": {
-    "firebase-admin": "^12.1.0"
-  }
-}
