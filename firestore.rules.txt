@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function signedIn() { return request.auth != null; }
+    function userDoc(uid) { return /databases/$(db)/documents/users/$(uid); }
+    function isAdmin() {
+      return signedIn() && exists(userDoc(request.auth.uid)) &&
+             get(userDoc(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Dokumen ini hanya bisa dibuat SEKALI: oleh pendaftar pertama (jadi admin).
+    match /meta/app {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.adminUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Penghitung jumlah anggota nyata, hanya boleh bertambah 1 setiap pendaftaran baru.
+    // Penanda versi data statis (produk, ikon, banner, dll). Admin yang menaikkan, semua login boleh membaca.
+    match /meta/ver {
+      allow read: if signedIn();
+      allow create, update: if isAdmin();
+    }
+
+    match /meta/stats {
+      allow read: if signedIn();
+      allow create: if isAdmin() || (signedIn() && request.resource.data.users == 1
+        && request.resource.data.keys().hasOnly(['users']));
+      // Admin boleh menyinkronkan ke angka berapa pun (tombol "Sinkronkan"); pengguna biasa
+      // hanya lewat alur pendaftaran, yang selalu menambah tepat 1.
+      allow update: if isAdmin() || (signedIn()
+        && request.resource.data.users == resource.data.users + 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['users']));
+      allow delete: if false;
+    }
+
+    // Kategori produk bebas buatan admin (mis. Nokos, Suntik Sosmed, App Premium).
+    match /categories/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // Catatan pribadi pengguna: penjualan, pengeluaran, hutang.
+    match /sales/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow create: if signedIn() && request.resource.data.uid == request.auth.uid; allow update, delete: if signedIn() && resource.data.uid == request.auth.uid; }
+    match /expenses/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow create: if signedIn() && request.resource.data.uid == request.auth.uid; allow update, delete: if signedIn() && resource.data.uid == request.auth.uid; }
+    match /debts/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow create: if signedIn() && request.resource.data.uid == request.auth.uid; allow update, delete: if signedIn() && resource.data.uid == request.auth.uid; }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.balance == 0 && request.resource.data.qrisBalance == 0
+        && !('payCode' in request.resource.data)
+        && (request.resource.data.role == 'user'
+            || (request.resource.data.role == 'admin'
+                && getAfter(/databases/$(db)/documents/meta/app).data.adminUid == uid));
+      // Admin bebas. Pengguna sendiri: ubah profil (saldo tetap), belanja (saldo turun,
+      // divalidasi ulang oleh rule 'orders'), atau pencairan QRIS->PPOB (jumlah kekal,
+      // tidak bisa "mencetak" saldo baru).
+      // Saldo (balance & qrisBalance) HANYA bisa diubah admin atau server (/api/pay, /api/haybi, /api/reward).
+      // Pengguna biasa cuma boleh mengubah profil. PIN diverifikasi di server, hash-nya ada di koleksi 'pins'.
+      allow update: if isAdmin() || (
+        signedIn() && request.auth.uid == uid
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.get('payCode','') == resource.data.get('payCode','')
+        && request.resource.data.balance == resource.data.balance
+        && request.resource.data.qrisBalance == resource.data.qrisBalance
+      );
+    }
+
+    // Produk dibaca PER KATEGORI. Akun pelanggan hanya boleh membaca satu produk (get) atau query yang
+    // memakai limit() <= 300, jadi membaca seluruh koleksi dari akun biasa ditolak server.
+    // Admin bebas (alat massal membaca semua produk sekali saat dipakai).
+    // CATATAN: terapkan aturan ini SETELAH versi baru index.html ter-deploy. Versi lama mengambil seluruh
+    // koleksi tanpa limit dan akan ditolak. Untuk membatalkan, kembalikan ke baris lama:
+    //   match /products/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /products/{id} {
+      allow get: if signedIn();
+      allow list: if signedIn() && (('limit' in request.query && request.query.limit <= 300) || isAdmin());
+      allow write: if isAdmin();
+    }
+    match /settings/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /icons/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /banners/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+
+    // Informasi/banner: semua bisa baca; hanya admin yang bisa membuat/menghapus/mengubah isi;
+    // pengguna biasa hanya boleh mengubah field reaksi (star/fire/thumb/reacted) saat menekan like.
+    match /posts/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        signedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['star','fire','thumb','reacted'])
+      );
+    }
+
+    match /orders/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      // Pesanan dibuat HANYA oleh server (/api/pay) setelah PIN benar. Browser tidak boleh membuat pesanan.
+      allow create: if false;
+      allow update: if isAdmin();
+    }
+
+    match /topups/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'menunggu';
+      allow update: if isAdmin();
+    }
+
+    // Konfirmasi saldo QRIS (uang masuk dari pembayar ke QRIS milik pengguna).
+    match /qristopups/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'menunggu';
+      allow update: if isAdmin();
+    }
+
+    // Log pencairan QRIS->PPOB. Uangnya sendiri dipindah lewat rule 'users' di atas;
+    // dokumen ini hanya catatan riwayat, tidak pernah diubah setelah dibuat.
+    match /qriswd/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create, update, delete: if false; // dibuat server (/api/pay) saat pencairan QRIS -> saldo PPOB
+    }
+
+    // Hash PIN + penghitung salah PIN. Tidak bisa dibaca/ditulis dari browser sama sekali.
+    match /pins/{id} { allow read, write: if false; }
+
+    // Pesan live chat. uid = pemilik percakapan (bukan pengirim); admin bisa membalas
+    // dengan uid = uid pengguna tujuan dan from == 'admin'.
+    match /messages/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isAdmin()
+        || (signedIn() && request.resource.data.uid == request.auth.uid
+            && request.resource.data.from == 'user');
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+
+    // Notifikasi. uid bisa: uid pengguna (pribadi), 'all' (siaran ke semua), atau
+    // 'admin' (khusus admin, misalnya pesanan/chat/top-up baru masuk).
+    match /notifications/{id} {
+      allow read: if signedIn() && (
+        resource.data.uid == request.auth.uid
+        || resource.data.uid == 'all'
+        || (isAdmin() && resource.data.uid == 'admin')
+      );
+      allow create: if signedIn() && (isAdmin() || request.resource.data.uid == 'admin');
+      allow update: if signedIn() && (
+        resource.data.uid == request.auth.uid
+        || (isAdmin() && (resource.data.uid == 'admin' || resource.data.uid == 'all'))
+      );
+      allow delete: if false;
+    }
+
+    // ===== GV REWARDS (Balapan, Referral, Voucher, GVCLIPPER) =====
+    // Saldo bonus HANYA ditulis oleh server (/api/reward.js lewat Admin SDK), jadi koleksi ini
+    // tidak bisa ditulis dari aplikasi dan tidak ada celah "mencetak" uang dari browser.
+    match /raceEntries/{id} { allow read: if signedIn(); allow write: if false; }
+    match /races/{id} { allow read: if signedIn(); allow write: if false; }
+    match /userstats/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if false; }
+    match /bonuses/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow write: if false; }
+    match /voucherRedeems/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow write: if false; }
+    match /vouchers/{id} { allow read, write: if isAdmin(); }
+
+    // Kode referral publik (hanya pemetaan kode -> uid pemilik).
+    match /refCodes/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow update: if false;
+    }
+    // Relasi downline. Dibuat sekali saat daftar; angka komisi/transaksi hanya diubah server.
+    match /referrals/{id} {
+      allow read: if signedIn() && (resource.data.referrerUid == request.auth.uid
+        || resource.data.downlineUid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && id == request.auth.uid
+        && request.resource.data.downlineUid == request.auth.uid
+        && request.resource.data.referrerUid != request.auth.uid
+        && request.resource.data.earned == 0 && request.resource.data.held == 0;
+      allow update, delete: if false;
+    }
+
+    // ===== TUKAR POIN =====
+    // Katalog hadiah dibuat admin. Poin & penukaran HANYA ditulis server (/api/reward.js).
+    match /rewards/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /rewardClaims/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow write: if false; }
+    match /pointLogs/{id} { allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin()); allow write: if false; }
+
+    // GVCLIPPER: campaign dibuat admin; video dikirim pengguna, hanya admin yang menyetujui.
+    // Pekerjaan kategori "Kerja" (Layanan Lainnya): pengguna kirim data, admin setujui lalu saldo PPOB bertambah.
+    match /works/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.status == 'menunggu';
+      allow update, delete: if isAdmin();
+    }
+
+    match /campaigns/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /clips/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'menunggu' && request.resource.data.earned == 0
+        && request.resource.data.paid == false;
+      allow update, delete: if isAdmin();
+    }
+  }
+}

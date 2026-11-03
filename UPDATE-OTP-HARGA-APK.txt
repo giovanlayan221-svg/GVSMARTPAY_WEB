@@ -1,0 +1,47 @@
+UPDATE: OTP DAFTAR, HAPUS PASANG APLIKASI, HARGA IKUT RESELLER, KELUAR BERTAHAP, DUKUNGAN APK
+=========================================================================================
+
+1) OTP PENDAFTARAN (anti-bot)  -> file baru: api/otp.js
+   Alur: isi data -> kode 6 digit dikirim ke EMAIL -> masukkan kode -> akun dibuat oleh SERVER.
+   Kode berlaku 10 menit, sekali pakai, salah 5x hangus, kirim ulang jeda 60 dtk, batas kirim per email & per IP per jam,
+   plus jebakan bot (kolom tersembunyi + form diisi < 1,5 detik ditolak).
+
+   Isi di Vercel > Settings > Environment Variables (pilih SALAH SATU pengirim email), lalu REDEPLOY:
+     Brevo (disarankan, gratis 300 email/hari, boleh pakai email Gmail sebagai pengirim):
+        BREVO_API_KEY   = (API key v3 dari brevo.com)
+        OTP_FROM_EMAIL  = (email pengirim yang sudah diverifikasi di Brevo: Senders & IP)
+     atau Resend (wajib domain sendiri yang sudah diverifikasi):
+        RESEND_API_KEY  = ...
+        OTP_FROM_EMAIL  = noreply@domainmu.com
+     Opsional: OTP_FROM_NAME = GVSMARTPAY   |   OTP_SECRET = (acak panjang, untuk hash kode)
+   FIREBASE_SERVICE_ACCOUNT sudah ada dan dipakai juga oleh otp.js.
+
+   WAJIB supaya bot tidak bisa menembak Firebase langsung (melewati OTP):
+     Firebase Console > Authentication > Settings > User actions > HILANGKAN centang "Enable create (sign-up)".
+     Akun tetap bisa dibuat karena yang membuatnya server (Admin SDK), bukan browser.
+   Tanpa env email di atas, tombol Daftar akan menampilkan "Layanan OTP belum diatur" (sengaja ditutup, bukan dibiarkan terbuka).
+   Tidak ada perubahan Firestore Rules. Koleksi baru otpCodes & otpLimits hanya diakses server.
+
+2) MENU & POPUP "PASANG APLIKASI" sudah dihapus (menu Profil, popup sistem, teks di pengaturan notifikasi).
+   Popup izin notifikasi tetap ada.
+
+3) HARGA IKUT RESELLER (contoh: reseller 5.600 -> web 5.800; reseller turun 5.000 -> web 5.200)
+   Rumus: harga web = modal reseller terbaru + margin tetap per produk. Berlaku untuk HAYBI, MangBeli, dan PunyaKios
+   (sesuai kolom Provider + SKU di Admin > Produk).
+   Cara pakai: Admin > Produk > kartu "Harga otomatis (ikut harga reseller)":
+     a. "Simulasi dulu" -> cek daftar perubahan.   b. "Sinkron sekarang" (run pertama mencatat margin tiap produk).
+     c. "Aktifkan otomatis".
+   Setelah aktif: disamakan otomatis tiap 5 jam selama ada pengguna yang membuka aplikasi (tanpa cron luar),
+   ditambah cadangan harian dari Vercel (vercel.json: /api/harga-sync jam 19:30 UTC). Wajib ada env CRON_SECRET (min. 16 karakter)
+   supaya cadangan harian jalan. Produk yang tidak mau ikut: field autoPrice = false.
+   Pengaman lama tetap ada: modal berubah >50% sekali sync = dilewati & dilaporkan.
+
+4) KELUAR BERTAHAP: tombol Kembali sekarang mundur SATU langkah per tekan:
+   popup -> lembar/sheet -> halaman anak -> halaman induk -> Beranda -> dialog "Keluar dari GVSMARTPAY?".
+   Di APK, tombol Kembali Android memanggil window.gvBack() ini, jadi perilakunya sama persis.
+
+5) APK: web sekarang mengenali window.GVNative (disuntik aplikasi Android). Di browser biasa tidak ada efek.
+   Notifikasi di APK memakai token FCM native; server (api/_push.js) tidak perlu diubah.
+   Cache PWA dinaikkan ke gvsp-v5 supaya pengguna lama otomatis mendapat versi ini.
+
+DEPLOY: upload semua isi folder ini ke repo GitHub yang tersambung ke Vercel (gvsmartpay2.vercel.app), timpa file lama, commit.

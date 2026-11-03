@@ -1,0 +1,19 @@
+LANGKAH DEPLOY (versi hemat baca + PIN server)
+
+1. Deploy isi zip ini ke Vercel seperti biasa (api/pay.js diganti versi baru yang lebih cepat dan lebih ketat).
+2. Firebase Console > Firestore > Rules: tempel isi firestore.rules.txt, Publish.
+   (Ada tambahan kecil: dokumen meta/ver untuk penanda versi cache.)
+3. Buka web, login, coba beli 1 produk kecil.
+
+BATAS KEAMANAN (bisa diubah admin tanpa deploy)
+Buat dokumen Firestore  settings/security  dengan field angka (semua opsional):
+  dailyOrder  = batas total belanja per hari per pengguna   (bawaan 5000000)
+  dailyWd     = batas pencairan QRIS per hari per pengguna   (bawaan 5000000)
+  coolMax     = batas total transaksi setelah PIN direset     (bawaan 100000)
+  coolHours   = lama batas itu berlaku, jam                   (bawaan 24)
+
+KECEPATAN
+Kalau lokasi database Firestore kamu di Jakarta/Singapore (asia-southeast), tambahkan di vercel.json:
+  "regions": ["sin1"]
+supaya server Vercel dekat dengan database. Lokasi database ada di Firebase Console > Firestore Database > Data
+(label "Location" / "Lokasi" di bagian atas atau di Project settings > Default GCP resource location).
