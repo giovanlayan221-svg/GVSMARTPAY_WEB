@@ -1,0 +1,78 @@
+{
+  "crons": [
+    {
+      "path": "/api/reward",
+      "schedule": "10 17 * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
+      ]
+    },
+    {
+      "source": "/manifest.webmanifest",
+      "headers": [
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/firebase-messaging-sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        },
+        {
+          "key": "Service-Worker-Allowed",
+          "value": "/"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "api/haybi.js": {
+      "maxDuration": 60
+    },
+    "api/haybi-callback.js": {
+      "maxDuration": 20
+    },
+    "api/sync-pending.js": {
+      "maxDuration": 30
+    },
+    "api/punyakios-callback.js": {
+      "maxDuration": 30
+    },
+    "api/pkqris.js": {
+      "maxDuration": 30
+    },
+    "api/harga-sync.js": {
+      "maxDuration": 60
+    },
+    "api/otp.js": {
+      "maxDuration": 20
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/manifest.webmanifest",
+      "destination": "/api/manifest"
+    }
+  ]
+}
