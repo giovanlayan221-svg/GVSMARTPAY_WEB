@@ -670,6 +670,7 @@ sn(db.collection('settings').doc('qrisInfo'),s=>{SET.qrisInfo=s.exists?s.data():
 sn(db.collection('settings').doc('bebas'),s=>{SET.bebas=s.exists?s.data():{};afterData()});sn(db.collection('settings').doc('cekNama'),s=>{SET.cekNama=s.exists?s.data():{};afterData()});
 sn(db.collection('settings').doc('soon'),s=>{SET.soon=s.exists?(s.data().m||{}):{};afterData()});
 sn(db.collection('settings').doc('terlaris'),s=>{SET.terlaris=s.exists?(s.data().l||[]):[];afterData()});
+sn(db.collection('settings').doc('flash'),s=>{SET.flash=s.exists?(s.data().sections||[]):[];afterData()});
 sn(mine('orders'),s=>{ORD=s.docs.map(d=>({id:d.id,...d.data()}));afterData()});sn(mine('topups'),s=>{TOP=s.docs.map(d=>({id:d.id,...d.data()}));afterData()});
 if(isAdm())sn(db.collection('users'),s=>{USR=s.docs.map(d=>({id:d.id,...d.data()}));afterData()});
 ssn('banners',db.collection('banners'),s=>{const _ba=s.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>(a.order||0)-(b.order||0)||a.createdAt-b.createdAt);BANNERS=_ba.filter(b=>!b.kind);POPS=_ba.filter(b=>b.kind=='pop');GUIDES=_ba.filter(b=>b.kind=='guide');POPLOADED=1;afterData()});
@@ -1957,6 +1958,76 @@ ${snBox}${o.resellerMsg?`<div class="odnote">Keterangan: ${ESC(o.resellerMsg)}</
 {const _pv=P.ord;P.ord=()=>{const g=SV.game,bk={lb:g.lb,ph:g.ph},vc=!!(OP&&OP.k=='game'&&OP.vc);if(vc){g.lb='Nomor Telepon';g.ph='08xxxxxxxxxx'}let h;try{h=_pv()}finally{g.lb=bk.lb;g.ph=bk.ph}return vc?h.replace('id="on" class="in" inputmode="numeric"','id="on" class="in" inputmode="tel" maxlength="16" autocomplete="tel"'):h}}
 {const _ov=act.oprod;act.oprod=d=>{if(OP&&OP.k=='game'&&OP.vc){const n=opNorm(OP.num);if(n.length<10||n.length>13||n.indexOf('08')!=0){toast('Masukkan nomor telepon yang valid (10-13 digit, awalan 08)');return}OP.num=n}return _ov(d)}}
 
+
+/* ===== Flash Sale & Promo (Beranda + Admin) =====
+   Data: settings/flash = {sections:[{id:'flash'|'promo',title,on,end,items:[{pid,group,name,cat,price,orig}]}]}
+   Harga coret & persen dihitung otomatis dari harga produk. Harga promo dipakai di halaman nominal dan DIVERIFIKASI server (api/_flash.js). */
+const FS_KIND={flash:{ico:'⚡',nm:'Flash Sale'},promo:{ico:'🔥',nm:'Promo'}};
+const fsSecs=()=>{const s=Array.isArray(SET.flash)?SET.flash:[];return ['flash','promo'].map(k=>{const x=s.find(y=>y&&y.id==k);return x?{id:k,title:x.title||FS_KIND[k].nm,on:x.on===true,end:Number(x.end)||0,items:Array.isArray(x.items)?x.items:[]}:{id:k,title:FS_KIND[k].nm,on:false,end:0,items:[]}})};
+const fsLiveSec=s=>s.on&&(!s.end||Date.now()<=s.end);
+function fsFind(pid){for(const s of fsSecs()){if(!fsLiveSec(s))continue;const it=s.items.find(x=>x&&x.pid===pid);if(it&&it.price>0)return {s,it}}return null}
+const fsOrig=it=>{const p=PRODS.find(x=>x.id==it.pid);return p&&p.price>0?p.price:(Number(it.orig)||0)};
+const fsPct=(o,n)=>o>0&&n<o?Math.max(1,Math.round((o-n)/o*100)):0;
+const fsCd=end=>{const s=Math.max(0,Math.floor((end-Date.now())/1000));return [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(x=>String(x).padStart(2,'0')).join(':')};
+const fsLocal=ms=>{const d=new Date(ms-new Date().getTimezoneOffset()*60000);return d.toISOString().slice(0,16)};
+
+/* --- harga promo masuk ke daftar nominal (dan ikut dibayar) --- */
+{const _PL=PL;PL=()=>_PL().map(p=>{const f=fsFind(p[3]);if(!f||!(f.it.price<p[1]))return p;const q=p.slice();q[1]=f.it.price;q.fs={o:p[1],k:f.s.id};return q})}
+
+/* --- tampilan kartu nominal: harga coret + persen --- */
+function fsDecorate(){const h=$('#opl');if(!h)return;PL().forEach(p=>{if(!p.fs)return;const b=h.querySelector('.pc[data-i="'+p[3]+'"]');if(!b||b.dataset.fs)return;b.dataset.fs=1;const t=b.querySelector('.pt');if(t)t.innerHTML='<s class="fso">'+rp(p.fs.o)+'</s>'+rp(p[1]);b.insertAdjacentHTML('beforeend','<i class="fsb">'+FS_KIND[p.fs.k].ico+' -'+fsPct(p.fs.o,p[1])+'%</i>')})}
+
+/* --- geser ke kartu produk yang diklik dari Beranda + kedip putih 3x --- */
+let FSF=null;
+function fsFocus(){if(!FSF)return;if(Date.now()-FSF.t>120000){FSF=null;return}const h=$('#opl');if(!h)return;const b=h.querySelector('.pc[data-i="'+FSF.pid+'"]');
+ if(b){FSF=null;setTimeout(()=>{try{b.scrollIntoView({behavior:'smooth',block:'center'})}catch(e){b.scrollIntoView()}b.classList.remove('fspulse');setTimeout(()=>{b.classList.add('fspulse');setTimeout(()=>b.classList.remove('fspulse'),2200)},450)},250);return}
+ let g='';try{g=GRP()}catch(e){}const st=PGS[g];if(st&&st.init&&!st.done&&!st.busy&&!st.err)pgLoad(g,true)} // belum ada di halaman pertama: muat berikutnya
+{const _d=drawOP;drawOP=function(){_d.apply(this,arguments);try{fsDecorate();fsFocus()}catch(e){console.warn('flash',e)}};post.ord=drawOP}
+
+/* --- buka halaman produk sesuai kategori produk promo --- */
+function fsOpen(g,pid){const a=String(g||'').split(':'),t=a[0],n=a.slice(1).join(':');FSF={pid,t:Date.now()};
+ if(t=='game'||t=='voucher'){const vc=t=='voucher'?1:0;let nm=n,tab=0;if(!vc&&a.length>2&&a[a.length-1]=='member'){nm=a.slice(1,-1).join(':');tab=1}GT=vc;OP={k:'game',name:nm,vc,num:'',q:'',tab,grid:1};return act.go({p:'ord'})}
+ if(t=='pulsa'||t=='pulsa2'||t=='data'||t=='telp'){const kind=t=='pulsa2'?'pulsa':t;OP={k:kind,name:'',op:n,num:'',q:'',tab:t=='pulsa2'?1:0,grid:1};if(kind!='data')OPK=kind;act.go({p:'ord'});setTimeout(()=>{if(FSF)toast('Isi nomor HP dulu, paket promo akan ditandai')},700);return}
+ if(t=='ew'){EC=Object.keys(EW).find(c=>EW[c].some(x=>x[0]==n))||'E-Wallet';return act.eopen({n})}
+ FSF=null;toast('Produk ini belum bisa dibuka dari sini')}
+act.fsgo=d=>{const s=fsSecs().find(x=>x.id==d.s),it=s&&s.items.find(x=>x.pid==d.pid);if(!it)return;fsOpen(it.group,it.pid)};
+
+/* --- kartu di Beranda (geser horizontal) --- */
+function fsHome(){return fsSecs().filter(fsLiveSec).map(s=>{const rows=s.items.map(it=>{const o=fsOrig(it);return o>it.price?{it,o,pc:fsPct(o,it.price)}:null}).filter(Boolean);if(!rows.length)return '';const K=FS_KIND[s.id];
+ return `<div class="card fs"><div class="fsh"><b>${K.ico} ${ESC(s.title||K.nm)}</b>${s.end?`<span class="fscd" data-end="${s.end}">Berakhir ${fsCd(s.end)}</span>`:''}</div><div class="hs fsl">${rows.map(x=>`<button class="fsc" data-a="fsgo" data-s="${s.id}" data-pid="${ESC(x.it.pid)}"><i class="fsr">${K.ico} HEMAT ${x.pc}%</i><b>${ESC(x.it.name)}</b><small>${ESC(x.it.cat||'')}</small><s>${rp(x.o)}</s><strong>${rp(x.it.price)}</strong><em>- ${x.pc}%</em></button>`).join('')}</div></div>`}).join('')}
+{const _h=P.home;P.home=()=>{let h=_h();const f=fsHome();if(!f)return h;const i=h.indexOf('<div class="tabs"><button class="'),j=i<0?-1:h.lastIndexOf('<div class="card">',i);return j<0?h:h.slice(0,j)+f+h.slice(j)}}
+setInterval(()=>{document.querySelectorAll('.fscd').forEach(e=>{const end=+e.dataset.end;if(Date.now()>end){if(!window.__fsx){window.__fsx=1;setTimeout(()=>{window.__fsx=0;try{render()}catch(x){}},200)}}else e.textContent='Berakhir '+fsCd(end)})},1000);
+
+/* --- Admin --- */
+let FSG={flash:'',promo:''};const FSPL={},FSBUSY={};
+const fsGroups=()=>pGroups().filter(g=>/^(game|voucher|pulsa|pulsa2|data|telp|ew):/.test(g)).sort();
+const fsGLabel=g=>{const a=g.split(':'),m={game:'Game',voucher:'Voucher',pulsa:'Pulsa',pulsa2:'Masa Aktif',data:'Internet',telp:'Telp & SMS',ew:'E-Wallet'};return (m[a[0]]||a[0])+' · '+a.slice(1).join(' · ')};
+const fsShort=g=>{const a=g.split(':'),m={game:'Game',voucher:'Voucher',pulsa:'Pulsa',pulsa2:'Masa Aktif',data:'Data',telp:'Telp & SMS',ew:'E-Wallet'};return a.slice(1).filter(x=>x!='member').join(' ')+' · '+(m[a[0]]||a[0])};
+async function fsLoadG(g){if(!g||FSPL[g]||FSBUSY[g])return;FSBUSY[g]=1;try{const sn=await db.collection('products').where('group','==',g).limit(500).get();FSPL[g]=sn.docs.map(d=>({id:d.id,...d.data()})).filter(p=>p.on!==false).sort((a,b)=>a.price-b.price)}catch(e){fe(e)}FSBUSY[g]=0;render()}
+const fsRead=id=>{const t=$('#fst-'+id),e=$('#fse-'+id),o=$('#fso-'+id);return {title:t?t.value.trim().slice(0,40):null,end:e?(e.value?new Date(e.value).getTime():0):null,on:o?o.checked:null}};
+const fsMut=(id,f)=>fsSecs().map(s=>{const x={...s,items:s.items.slice()};return s.id==id?f(x):x}).map(s=>({id:s.id,kind:s.id,title:s.title,on:!!s.on,end:s.end||0,items:s.items}));
+const fsApplyFields=(id,s)=>{const r=fsRead(id);if(r.title!==null)s.title=r.title||FS_KIND[id].nm;if(r.end!==null)s.end=r.end||0;if(r.on!==null)s.on=r.on;return s};
+const fsWrite=async(secs,quiet)=>{try{await db.collection('settings').doc('flash').set({sections:secs,updatedAt:Date.now()});SET.flash=secs;if(!quiet)render();return true}catch(e){fe(e);return false}};
+act.fssave=async d=>{if(await fsWrite(fsMut(d.s,s=>fsApplyFields(d.s,s)),false))toast('Tersimpan')};
+act.fsadd=async d=>{const id=d.s,g=FSG[id],pid=($('#fsp-'+id)||{}).value,price=num(($('#fsv-'+id)||{}).value),p=g&&(FSPL[g]||[]).find(x=>x.id==pid);
+ if(!p)return toast('Pilih produk dulu');if(!(price>0))return toast('Isi harga promo');if(price>=p.price)return toast('Harga promo harus lebih murah dari harga normal ('+rp(p.price)+')');
+ const cur=fsSecs().find(s=>s.id==id);if(cur.items.some(x=>x.pid==pid))return toast('Produk ini sudah ada di daftar');if(cur.items.length>=12)return toast('Maksimal 12 item');
+ if(await fsWrite(fsMut(id,s=>{fsApplyFields(id,s);s.items.push({pid:p.id,group:g,name:p.name,cat:fsShort(g),price,orig:p.price});return s}),false))toast('Item ditambahkan')};
+act.fsdel=async d=>{await fsWrite(fsMut(d.s,s=>{fsApplyFields(d.s,s);s.items=s.items.filter(x=>x.pid!=d.pid);return s}),false)};
+act.fsmv=async d=>{await fsWrite(fsMut(d.s,s=>{fsApplyFields(d.s,s);const i=s.items.findIndex(x=>x.pid==d.pid),j=i+(+d.d);if(i>=0&&j>=0&&j<s.items.length)[s.items[i],s.items[j]]=[s.items[j],s.items[i]];return s}),false)};
+document.addEventListener('change',async e=>{const t=e.target,id=t&&t.dataset&&t.dataset.fsg;if(!id)return;await fsWrite(fsMut(id,s=>fsApplyFields(id,s)),true);FSG[id]=t.value;render();if(t.value)fsLoadG(t.value)});
+function fsAdm(){return fsSecs().map(s=>{const K=FS_KIND[s.id],g=FSG[s.id],pl=g?FSPL[g]:null,ex=s.id=='flash'?'Flash Sale 1.1':'Promo Akhir Bulan';
+ return `<div class="card"><h3>${K.ico} ${K.nm} di Beranda</h3><p class="m">Tampil di Beranda di bawah Paket Terlaris. Harga coret dan persen otomatis dari harga produk. Harga promo ini yang benar-benar dibayar pelanggan.</p>
+<label>Judul (contoh: ${ex})</label><input id="fst-${s.id}" class="in" maxlength="40" value="${ESC(s.title)}">
+<label>Berakhir (kosongkan = tanpa batas waktu)</label><input id="fse-${s.id}" class="in" type="datetime-local" value="${s.end?fsLocal(s.end):''}">
+<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input id="fso-${s.id}" type="checkbox" ${s.on?'checked':''}> Tampilkan di Beranda</label>
+<button class="btn s" style="margin-top:8px" data-a="fssave" data-s="${s.id}">Simpan judul, waktu & status</button>
+<label>Item (${s.items.length}/12)</label>${s.items.length?s.items.map(it=>{const o=fsOrig(it),pc=fsPct(o,it.price);return `<div class="lr" style="cursor:default;padding:6px 0"><b class="fl">${ESC(it.name)}<br><small>${ESC(it.cat||'')} · ${rp(o)} jadi ${rp(it.price)}${pc?' (-'+pc+'%)':' (promo tidak aktif: harga normal sudah ≤ harga promo)'}</small></b><button class="btn s g2" data-a="fsmv" data-s="${s.id}" data-pid="${ESC(it.pid)}" data-d="-1">↑</button><button class="btn s g2" data-a="fsmv" data-s="${s.id}" data-pid="${ESC(it.pid)}" data-d="1">↓</button><button class="btn s g2" data-a="fsdel" data-s="${s.id}" data-pid="${ESC(it.pid)}">Hapus</button></div>`}).join(''):'<p class="m">Belum ada item.</p>'}
+<label>Tambah item: kategori</label><select id="fsg-${s.id}" class="in" data-fsg="${s.id}"><option value="">Pilih kategori...</option>${fsGroups().map(x=>`<option value="${ESC(x)}" ${x==g?'selected':''}>${ESC(fsGLabel(x))}</option>`).join('')}</select>
+${g?(pl?(pl.length?`<label>Produk</label><select id="fsp-${s.id}" class="in">${pl.map(p=>`<option value="${ESC(p.id)}">${ESC(p.name)} - ${rp(p.price)}</option>`).join('')}</select><label>Harga promo (Rp, harga setelah dipotong)</label><input id="fsv-${s.id}" class="in" inputmode="numeric" placeholder="contoh: 5000"><button class="btn s" style="margin-top:10px" data-a="fsadd" data-s="${s.id}">Tambah ke ${K.nm}</button>`:'<p class="m">Kategori ini belum punya produk aktif.</p>'):'<p class="m">Memuat produk...</p>'):''}</div>`}).join('')}
+{const _m=ADV.menu;ADV.menu=()=>fsAdm()+_m()}
+
+const _fsCss=document.createElement('style');_fsCss.textContent=`.fs{padding:0;overflow:hidden}.fsh{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:12px 14px;background:linear-gradient(135deg,var(--p),var(--p2));color:#fff}.fsh b{font-size:16px}.fscd{font-weight:700;font-size:12px;background:rgba(255,255,255,.2);border-radius:10px;padding:4px 8px;font-variant-numeric:tabular-nums;white-space:nowrap}.fsl{padding:12px 14px;gap:10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}.fsc{flex:0 0 152px;scroll-snap-align:start;text-align:left;background:var(--cd);border:1px solid var(--ln);border-radius:16px;padding:0 0 12px;overflow:hidden;display:flex;flex-direction:column;gap:2px}.fsr{display:block;font-style:normal;font-weight:800;font-size:12px;background:var(--p2);color:#fff;padding:6px 10px;margin-bottom:8px}.fsc b{padding:0 10px;font-size:14px;line-height:1.25}.fsc small{padding:0 10px;color:var(--mu);font-size:11px}.fsc s{padding:6px 10px 0;color:var(--mu);font-size:12px}.fsc strong{padding:0 10px;font-size:17px;color:var(--p2)}.fsc em{margin:4px 10px 0;font-style:normal;font-weight:800;font-size:11px;color:var(--p2);background:var(--pl);border-radius:8px;padding:2px 8px;align-self:flex-start}.pc{position:relative}.fsb{position:absolute;top:0;right:0;font-style:normal;font-weight:800;font-size:11px;background:var(--p2);color:#fff;border-radius:0 16px 0 10px;padding:3px 8px}.pc .pt s.fso{display:block;font-size:10px;font-weight:600;opacity:.85}@keyframes fsPulse{0%,100%{box-shadow:0 0 0 0 #fff,0 0 0 0 rgba(124,58,237,0)}50%{box-shadow:0 0 0 3px #fff,0 0 0 6px rgba(124,58,237,.55),0 0 22px 8px rgba(255,255,255,.95)}}.fspulse{animation:fsPulse .7s ease-in-out 3;border-color:#fff!important}`;document.head.appendChild(_fsCss);
 </script><style id="gv-modern">
 /* ==========================================================================
    GV MODERN — lapisan desain baru GVSMARTPAY
