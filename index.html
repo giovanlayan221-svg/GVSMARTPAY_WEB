@@ -726,7 +726,7 @@ act.accok=async()=>{const n=$('#an2').value.trim(),p=$('#ah2').value.trim();if(n
 act.lo=async()=>{close();toast('Keluar...');try{await unregisterPush()}catch(e){}try{await auth.signOut()}catch(e){toast('Gagal logout')}};
 /* ---- Pendaftaran dengan OTP email (anti-bot): kode dikirim server, akun dibuat server setelah kode benar ---- */
 let OTPST=null,AUT0=Date.now(),OTPTMR=0;
-const otpApi=async b=>{let r,j={};try{r=await fetch('/api/otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});j=await r.json().catch(()=>({}))}catch(e){throw new Error('Koneksi bermasalah. Periksa internet lalu coba lagi.')}if(!r.ok)throw Object.assign(new Error(j.error||('Gagal ('+r.status+')')),{wait:j.wait});return j};
+const otpApi=async b=>{let r,j={};try{r=await fetch('/api/notify?otp=1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});j=await r.json().catch(()=>({}))}catch(e){throw new Error('Koneksi bermasalah. Periksa internet lalu coba lagi.')}if(!r.ok)throw Object.assign(new Error(j.error||('Gagal ('+r.status+')')),{wait:j.wait});return j};
 const abtn=(on,txt)=>{const b=$('.aw .btn.w');if(!b)return;if(on){if(!b.dataset.o)b.dataset.o=b.innerHTML;b.classList.add('ldg');b.innerHTML='<span class="ld"></span> '+txt}else{b.classList.remove('ldg');if(b.dataset.o){b.innerHTML=b.dataset.o;delete b.dataset.o}}};
 function drawAU(){
   if(AUM=='reg'&&OTPST&&!OTPST.keep){drawOTP();return}
