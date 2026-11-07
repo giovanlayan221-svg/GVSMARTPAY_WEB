@@ -20,7 +20,7 @@ const limited = (uid) => { const now = Date.now(), a = (HIT.get(uid) || []).filt
 
 module.exports = async (req, res) => {
   // /api/otp (pendaftaran OTP) dialihkan ke sini lewat rewrite di vercel.json agar jumlah Serverless Function tetap 12 (batas akun Hobby).
-  if (req.query && req.query.otp) return require('./_otp')(req, res);
+  if ((req.query && req.query.otp) || /^\/api\/otp(\?|$)/.test(String(req.url || ''))) return require('./_otp')(req, res);
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (initErr) return res.status(500).json({ error: 'Kunci Firebase bermasalah: ' + initErr.message });
   try {
@@ -91,4 +91,3 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: e.message });
   }
 };
-                                                        

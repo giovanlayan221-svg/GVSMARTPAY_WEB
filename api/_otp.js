@@ -64,15 +64,43 @@ async function sendMail(to, code) {
     } else if (process.env.RESEND_API_KEY && from) {
       r = await fetch('https://api.resend.com/emails', { method: 'POST', signal: ctl.signal, headers: { Authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'Content-Type': 'application/json' }, body: JSON.stringify({ from: name + ' <' + from + '>', to: [to], subject, html, text }) });
     } else { throw fail(503, 'Layanan OTP belum diatur di server (isi BREVO_API_KEY atau RESEND_API_KEY dan OTP_FROM_EMAIL).'); }
-    if (!r.ok) { let t = ''; try { t = (await r.text()).slice(0, 200); } catch (e) {} console.error('otp-mail', r.status, t); throw fail(502, 'Email OTP gagal dikirim. Coba lagi sebentar.'); }
+    if (!r.ok) {
+      let t = ''; try { t = (await r.text()).slice(0, 300); } catch (e) {}
+      // Catatan untuk admin (lihat Vercel > Logs). 401 = API key salah / IP belum diizinkan di Brevo; 400 = pengirim (OTP_FROM_EMAIL) belum diverifikasi.
+      console.error('otp-mail GAGAL status=' + r.status + ' provider=' + (process.env.BREVO_API_KEY && from ? 'brevo' : 'resend') + ' detail=' + t);
+      throw fail(502, 'Email OTP gagal dikirim. Coba lagi sebentar.');
+    }
   } catch (e) {
     if (e.http) throw e;
     throw fail(502, 'Email OTP gagal dikirim. Coba lagi sebentar.');
   } finally { clearTimeout(timer); }
 }
 
+// GET /api/notify?otp=1&diag=1 -> cek konfigurasi OTP TANPA mengirim email dan TANPA membuka nilai rahasia (hanya benar/salah + kode status).
+async function diag(req, res) {
+  const out = { ok: true, provider: process.env.BREVO_API_KEY ? 'brevo' : (process.env.RESEND_API_KEY ? 'resend' : 'none'),
+    env: { BREVO_API_KEY: !!process.env.BREVO_API_KEY, RESEND_API_KEY: !!process.env.RESEND_API_KEY, OTP_FROM_EMAIL: !!process.env.OTP_FROM_EMAIL, OTP_FROM_NAME: !!process.env.OTP_FROM_NAME, OTP_SECRET: !!process.env.OTP_SECRET, FIREBASE_SERVICE_ACCOUNT: !!process.env.FIREBASE_SERVICE_ACCOUNT } };
+  if (initErr) { out.ok = false; out.firebase = { ok: false, masalah: /belum diisi/.test(initErr.message) ? 'FIREBASE_SERVICE_ACCOUNT kosong' : 'FIREBASE_SERVICE_ACCOUNT bukan JSON service account yang valid' }; return res.status(200).json(out); }
+  const db = admin.firestore();
+  try { if (!(await hit(db, 'd_' + sha(ipOf(req)), 30))) return res.status(429).json({ error: 'Terlalu sering. Coba lagi nanti.' }); } catch (e) {}
+  try { await db.doc('settings/flash').get(); out.firebase = { ok: true }; } catch (e) { out.ok = false; out.firebase = { ok: false, masalah: 'Tidak bisa membaca Firestore dengan kunci ini (' + String(e && e.code || 'error') + ')' }; }
+  const key = process.env.BREVO_API_KEY, from = String(process.env.OTP_FROM_EMAIL || '').toLowerCase();
+  if (key) {
+    out.brevo = { kunciFormatBenar: key.startsWith('xkeysib-') };
+    try {
+      const r = await fetch('https://api.brevo.com/v3/senders', { headers: { 'api-key': key, accept: 'application/json' } });
+      out.brevo.status = r.status;
+      if (r.ok) { const j = await r.json(); const me = (j.senders || []).find((x) => String(x.email).toLowerCase() === from); out.brevo.pengirimTerdaftar = !!me; out.brevo.pengirimAktif = !!(me && me.active); if (!me || !me.active) out.ok = false; }
+      else { out.ok = false; let t = ''; try { t = (await r.text()).slice(0, 200); } catch (e) {} out.brevo.pesan = t; }
+    } catch (e) { out.ok = false; out.brevo.pesan = 'Tidak bisa menghubungi Brevo'; }
+  } else if (!process.env.RESEND_API_KEY) { out.ok = false; out.brevo = { pesan: 'BREVO_API_KEY / RESEND_API_KEY belum diisi' }; }
+  if (!process.env.OTP_FROM_EMAIL) out.ok = false;
+  return res.status(200).json(out);
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+  if (req.method === 'GET' && req.query && req.query.diag) return diag(req, res);
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   if (initErr) return res.status(500).json({ error: 'Server belum siap (Firebase)' });
   try {
@@ -133,4 +161,3 @@ module.exports = async (req, res) => {
     return res.status(500).json({ error: 'Terjadi kesalahan server' });
   }
 };
-  
